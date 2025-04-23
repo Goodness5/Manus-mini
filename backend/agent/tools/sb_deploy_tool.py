@@ -9,7 +9,7 @@ from agent.tools.sb_shell_tool import SandboxShellTool
 load_dotenv()
 
 class SandboxDeployTool(SandboxToolsBase):
-    """Tool for deploying static websites from a Daytona sandbox to Cloudflare Pages."""
+    """Tool for deploying static websites from an E2B sandbox to Cloudflare Pages."""
 
     def __init__(self, sandbox: Sandbox):
         super().__init__(sandbox)
@@ -55,7 +55,7 @@ class SandboxDeployTool(SandboxToolsBase):
         2. You have a complete, ready-to-deploy directory 
         
         NOTE: If the same name is used, it will redeploy to the same project as before
-                -->
+        -->
 
         <deploy name="my-site" directory_path="website">
         </deploy>
@@ -79,11 +79,12 @@ class SandboxDeployTool(SandboxToolsBase):
             directory_path = self.clean_path(directory_path)
             full_path = f"{self.workspace_path}/{directory_path}"
             
-            # Verify the directory exists
+            # Verify the directory exists and is not empty
             try:
-                dir_info = self.sandbox.fs.get_file_info(full_path)
-                if not dir_info.is_dir:
-                    return self.fail_response(f"'{directory_path}' is not a directory")
+                # Use E2B filesystem to check directory
+                files = await self.sandbox.fs.list(full_path)
+                if not files:
+                    return self.fail_response(f"Directory '{directory_path}' is empty or does not exist")
             except Exception as e:
                 return self.fail_response(f"Directory '{directory_path}' does not exist: {str(e)}")
             
@@ -95,27 +96,23 @@ class SandboxDeployTool(SandboxToolsBase):
                     
                 # Single command that creates the project if it doesn't exist and then deploys
                 project_name = f"{self.sandbox_id}-{name}"
-                deploy_cmd = f'''export CLOUDFLARE_API_TOKEN={self.cloudflare_api_token} && 
-                    (npx wrangler pages deploy {full_path} --project-name {project_name} || 
-                    (npx wrangler pages project create {project_name} --production-branch production && 
+                deploy_cmd = f'''export CLOUDFLARE_API_TOKEN={self.cloudflare_api_token} && \
+                    (npx wrangler pages deploy {full_path} --project-name {project_name} || \
+                    (npx wrangler pages project create {project_name} --production-branch production && \
                     npx wrangler pages deploy {full_path} --project-name {project_name}))'''
 
-                # Execute command using shell_tool.execute_command
-                response = await self.shell_tool.execute_command(
-                    command=deploy_cmd,
-                    folder=None,  # Use the workspace root
-                    timeout=300   # Increased timeout for deployments
-                )
+                # Execute command using E2B's process execution
+                process = await self.sandbox.process.start(deploy_cmd)
+                output = await process.wait()
+                response = output.stdout
                 
-                print(f"Deployment response: {response}")
-                
-                if response.success:
+                if response:
                     return self.success_response({
                         "message": f"Website deployed successfully",
-                        "output": response.output
+                        "output": response
                     })
                 else:
-                    return self.fail_response(f"Deployment failed: {response.output}")
+                    return self.fail_response(f"Deployment failed: No output received")
             except Exception as e:
                 return self.fail_response(f"Error during deployment: {str(e)}")
         except Exception as e:
@@ -123,15 +120,13 @@ class SandboxDeployTool(SandboxToolsBase):
 
 if __name__ == "__main__":
     import asyncio
-    import sys
     
     async def test_deploy():
-        # Replace these with actual values for testing
-        sandbox_id = "sandbox-ccb30b35"
-        password = "test-password"
+        # Create a new sandbox for testing
+        from sandbox.sandbox import get_or_start_sandbox
         
-        # Initialize the deploy tool
-        deploy_tool = SandboxDeployTool(sandbox_id, password)
+        sandbox = await get_or_start_sandbox()
+        deploy_tool = SandboxDeployTool(sandbox)
         
         # Test deployment - replace with actual directory path and site name
         result = await deploy_tool.deploy(
@@ -141,4 +136,3 @@ if __name__ == "__main__":
         print(f"Deployment result: {result}")
             
     asyncio.run(test_deploy())
-
