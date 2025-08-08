@@ -177,15 +177,31 @@ async def restore_running_agent_runs():
     """Restore any agent runs that were still marked as running in the database."""
     logger.info("Restoring running agent runs after server restart")
     client = await db.client
-    running_agent_runs = await client.table('agent_runs').select('*').eq("status", "running").execute()
+    max_retries = 3
+    retry_delay = 1.0  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            running_agent_runs = await client.table('agent_runs').select('*').eq("status", "running").execute()
 
-    for run in running_agent_runs.data:
-        logger.warning(f"Found running agent run {run['id']} from before server restart")
-        await client.table('agent_runs').update({
-            "status": "failed", 
-            "error": "Server restarted while agent was running",
-            "completed_at": datetime.now(timezone.utc).isoformat()
-        }).eq("id", run['id']).execute()
+            for run in running_agent_runs.data:
+                logger.warning(f"Found running agent run {run['id']} from before server restart")
+                await client.table('agent_runs').update({
+                    "status": "failed", 
+                    "error": "Server restarted while agent was running",
+                    "completed_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", run['id']).execute()
+
+            logger.info(f"Successfully restored running agent runs")
+            return
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"Attempt {attempt + 1}/{max_retries} to restore agent runs failed: {str(e)}")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error("Failed to restore agent runs after all attempts")
+                raise
 
 async def check_for_active_project_agent_run(client, project_id: str):
     """

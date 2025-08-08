@@ -189,17 +189,23 @@ export const createProject = async (
 ): Promise<Project> => {
   const supabase = createClient();
   
-  // If accountId is not provided, we'll need to get the user's ID
-  if (!accountId) {
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    
-    if (userError) throw userError;
-    if (!userData.user) throw new Error('You must be logged in to create a project');
-    
-    // In Basejump, the personal account ID is the same as the user ID
-    accountId = userData.user.id;
-  }
-  
+  // Get the current user
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  if (!user) throw new Error('You must be logged in to create a project');
+
+  // Get or create the personal account
+  const { data: accountData, error: accountError } = await supabase
+    .rpc('get_personal_account')
+    .single();
+
+  if (accountError) throw accountError;
+  if (!accountData) throw new Error('Could not get personal account');
+
+  // Use the account ID from the personal account
+  // @ts-ignore
+  accountId = accountData?.account_id;
+
   const { data, error } = await supabase
     .from('projects')
     .insert({ 
@@ -211,8 +217,7 @@ export const createProject = async (
     .single();
   
   if (error) throw error;
-  
-  // Map the database response to our Project type
+
   return {
     id: data.project_id,
     name: data.name,

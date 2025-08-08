@@ -43,7 +43,16 @@ async def lifespan(app: FastAPI):
     from services import redis
     await redis.initialize_async()
     
-    asyncio.create_task(agent_api.restore_running_agent_runs())
+    try:
+        logger.info("Attempting to restore running agent runs...")
+        restore_task = asyncio.create_task(agent_api.restore_running_agent_runs())
+        # Wait for a short time to catch immediate connection errors
+        await asyncio.wait_for(restore_task, timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning("Timeout while restoring agent runs - continuing startup")
+    except Exception as e:
+        logger.error(f"Failed to restore agent runs: {str(e)}")
+        logger.exception(e)
     
     yield
     
@@ -84,4 +93,4 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting server on 0.0.0.0:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)
